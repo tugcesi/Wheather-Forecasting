@@ -1,0 +1,13 @@
+# Python cache files
+__pycache__/
+*.pyc
+
+# Virtual environment directories
+env/
+venv/
+ENV/
+
+# Data files
+*.csv
+*.json
+*.xlsx
