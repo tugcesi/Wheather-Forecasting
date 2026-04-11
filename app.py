@@ -43,6 +43,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### 📊 Model Bilgisi")
+    st.success("✓ Model yüklendi")
     st.info(f"✓ Seçilen Model: {model_choice}\n✓ Tahmin Süresi: {tahmin_gunu} gün")
 
 # Model yükleme
@@ -55,20 +56,23 @@ def load_model(model_type):
 
 try:
     model = load_model(model_choice)
-    st.success("✓ Model başarıyla yüklendi")
 except:
     st.error("❌ Model dosyaları bulunamadı. Lütfen model.pkl ve model.joblib dosyalarını kontrol edin.")
     st.stop()
+
+# Forecast hesabını cache'le — sadece model_choice veya tahmin_gunu değişince yeniden hesapla
+@st.cache_data
+def get_forecast(_model, periods):
+    future = _model.make_future_dataframe(periods=periods)
+    return _model.predict(future)
+
+forecast = get_forecast(model, tahmin_gunu)
 
 # Ana içerik
 col1, col2 = st.columns([2, 1])
 
 with col1:
     st.markdown("### 📈 Hava Durumu Tahmini")
-    
-    # Tahmin yap
-    future = model.make_future_dataframe(periods=tahmin_gunu)
-    forecast = model.predict(future)
     
     # Son gün verisi
     last_forecast = forecast.iloc[-1]
@@ -113,17 +117,15 @@ st.markdown("### 📊 Grafikler")
 
 tab1, tab2, tab3 = st.tabs(["📈 Zaman Serisi", "📉 Günlük Tahmin", "🔍 Detaylı Analiz"])
 
-with tab1:
+@st.cache_data
+def make_timeseries_fig(_forecast, tahmin_gunu):
+    forecast_tail = _forecast.tail(tahmin_gunu)
+    historical = _forecast[_forecast['ds'] <= _forecast['ds'].max() - timedelta(days=tahmin_gunu)]
     fig, ax = plt.subplots(figsize=(14, 6), dpi=100)
-    
-    # Son 365 gün gerçek + tahmin
-    historical = forecast[forecast['ds'] <= forecast['ds'].max() - timedelta(days=tahmin_gunu)]
-    
     ax.plot(historical['ds'], historical['yhat'], 'b-', linewidth=2, label='Geçmiş Veriler', alpha=0.7)
     ax.plot(forecast_tail['ds'], forecast_tail['yhat'], 'r--', linewidth=2.5, label='Tahmin', alpha=0.9)
-    ax.fill_between(forecast_tail['ds'], forecast_tail['yhat_lower'], 
+    ax.fill_between(forecast_tail['ds'], forecast_tail['yhat_lower'],
                      forecast_tail['yhat_upper'], alpha=0.2, color='red', label='Güven Aralığı')
-    
     ax.set_xlabel('Tarih', fontweight='bold', fontsize=11)
     ax.set_ylabel('Sıcaklık (°C)', fontweight='bold', fontsize=11)
     ax.set_title('Sıcaklık Tahmini - Zaman Serisi', fontweight='bold', fontsize=13)
@@ -131,41 +133,36 @@ with tab1:
     ax.grid(True, alpha=0.3)
     plt.xticks(rotation=45)
     plt.tight_layout()
-    
-    st.pyplot(fig)
+    return fig
 
-with tab2:
-    # Son 30 günlük tahmin
-    fig, ax = plt.subplots(figsize=(14, 6), dpi=100)
-    
+@st.cache_data
+def make_daily_fig(_forecast, tahmin_gunu):
+    forecast_tail = _forecast.tail(tahmin_gunu)
     recent_forecast = forecast_tail.tail(30) if len(forecast_tail) >= 30 else forecast_tail
-    colors = ['#2ECC71' if x > recent_forecast['yhat'].mean() else '#E74C3C' 
+    colors = ['#2ECC71' if x > recent_forecast['yhat'].mean() else '#E74C3C'
               for x in recent_forecast['yhat']]
-    
-    ax.bar(range(len(recent_forecast)), recent_forecast['yhat'], color=colors, 
+    fig, ax = plt.subplots(figsize=(14, 6), dpi=100)
+    ax.bar(range(len(recent_forecast)), recent_forecast['yhat'], color=colors,
            edgecolor='#2C3E50', alpha=0.7)
-    ax.axhline(y=recent_forecast['yhat'].mean(), color='#3498DB', linestyle='--', 
+    ax.axhline(y=recent_forecast['yhat'].mean(), color='#3498DB', linestyle='--',
                linewidth=2.5, label=f'Ortalama: {recent_forecast["yhat"].mean():.1f}°C')
-    
     ax.set_xlabel('Gün', fontweight='bold', fontsize=11)
     ax.set_ylabel('Sıcaklık (°C)', fontweight='bold', fontsize=11)
     ax.set_title('Günlük Sıcaklık Tahmini', fontweight='bold', fontsize=13)
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3, axis='y')
     plt.tight_layout()
-    
-    st.pyplot(fig)
+    return fig
 
-with tab3:
-    # Min-Max aralık
+@st.cache_data
+def make_detail_fig(_forecast, tahmin_gunu):
+    forecast_tail = _forecast.tail(tahmin_gunu)
     fig, ax = plt.subplots(figsize=(14, 6), dpi=100)
-    
-    ax.plot(forecast_tail['ds'], forecast_tail['yhat'], 'o-', linewidth=2.5, 
+    ax.plot(forecast_tail['ds'], forecast_tail['yhat'], 'o-', linewidth=2.5,
             markersize=6, color='#3498DB', label='Tahmin', alpha=0.8)
-    ax.fill_between(forecast_tail['ds'], forecast_tail['yhat_lower'], 
-                     forecast_tail['yhat_upper'], alpha=0.3, color='#3498DB', 
+    ax.fill_between(forecast_tail['ds'], forecast_tail['yhat_lower'],
+                     forecast_tail['yhat_upper'], alpha=0.3, color='#3498DB',
                      label='95% Güven Aralığı')
-    
     ax.set_xlabel('Tarih', fontweight='bold', fontsize=11)
     ax.set_ylabel('Sıcaklık (°C)', fontweight='bold', fontsize=11)
     ax.set_title('Detaylı Tahmin - Min/Max Aralığı', fontweight='bold', fontsize=13)
@@ -173,8 +170,16 @@ with tab3:
     ax.grid(True, alpha=0.3)
     plt.xticks(rotation=45)
     plt.tight_layout()
-    
-    st.pyplot(fig)
+    return fig
+
+with tab1:
+    st.pyplot(make_timeseries_fig(forecast, tahmin_gunu))
+
+with tab2:
+    st.pyplot(make_daily_fig(forecast, tahmin_gunu))
+
+with tab3:
+    st.pyplot(make_detail_fig(forecast, tahmin_gunu))
 
 # Veri Tablosu
 st.markdown("---")
